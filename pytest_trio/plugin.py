@@ -1,17 +1,18 @@
 """pytest-trio implementation."""
 
+import contextvars
 import sys
-from functools import wraps, partial
 from collections.abc import Coroutine, Generator
 from contextlib import asynccontextmanager
+from functools import partial, wraps
 from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
-import contextvars
+
 import outcome
 import pytest
 import trio
+from _pytest.outcomes import Skipped, XFailed
 from trio.abc import Clock, Instrument
 from trio.testing import MockClock
-from _pytest.outcomes import Skipped, XFailed
 
 if sys.version_info[:2] < (3, 11):
     from exceptiongroup import BaseExceptionGroup
@@ -182,7 +183,7 @@ class TrioFixture:
                     yield nursery_fixture
                 finally:
                     nursery_fixture.cancel_scope.cancel()
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001
             test_ctx.crash(self, exc)
         finally:
             self.setup_done.set()
@@ -285,8 +286,7 @@ class TrioFixture:
             try:
                 for event in self.user_done_events:
                     await event.wait()
-            except BaseException as exc:
-                assert isinstance(exc, trio.Cancelled)  # noqa: PT017
+            except trio.Cancelled as exc:
                 yield_outcome = outcome.Error(exc)
                 test_ctx.crash(self, None)
                 with trio.CancelScope(shield=True):
@@ -328,7 +328,7 @@ def _trio_test(run):
             if not clocks:
                 clock = None
             elif len(clocks) == 1:
-                clock = list(clocks.values())[0]
+                clock = next(iter(clocks.values()))
             else:
                 raise ValueError(
                     f"Expected at most one Clock in kwargs, got {clocks!r}"
@@ -471,13 +471,11 @@ def trio_fixture(func):
 
 
 def _is_trio_fixture(func, coerce_async, kwargs):
-    if getattr(func, "_force_trio_fixture", False):
-        return True
-    if coerce_async and (iscoroutinefunction(func) or isasyncgenfunction(func)):
-        return True
-    if any(isinstance(value, TrioFixture) for value in kwargs.values()):
-        return True
-    return False
+    return (
+        getattr(func, "_force_trio_fixture", False)
+        or (coerce_async and (iscoroutinefunction(func) or isasyncgenfunction(func)))
+        or any(isinstance(value, TrioFixture) for value in kwargs.values())
+    )
 
 
 def handle_fixture(fixturedef, request, force_trio_mode):
