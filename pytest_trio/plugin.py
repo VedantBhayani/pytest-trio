@@ -470,6 +470,15 @@ def trio_fixture(func):
     return pytest.fixture(func)
 
 
+def _has_trio_marker(node):
+    """Check if node or any ancestor has the trio marker."""
+    while node is not None:
+        if node.get_closest_marker("trio") is not None:
+            return True
+        node = getattr(node, "parent", None)
+    return False
+
+
 def _is_trio_fixture(func, coerce_async, kwargs):
     return (
         getattr(func, "_force_trio_fixture", False)
@@ -480,7 +489,7 @@ def _is_trio_fixture(func, coerce_async, kwargs):
 
 def handle_fixture(fixturedef, request, force_trio_mode):
     # print(f"DEBUG handle_fixture called: fixturedef.argname={fixturedef.argname}, fixturedef.func={fixturedef.func}, fixturedef.autouse={getattr(fixturedef, 'autouse', 'N/A')}")
-    is_trio_test = request.node.get_closest_marker("trio") is not None
+    is_trio_test = _has_trio_marker(request.node)
     if force_trio_mode:
         is_trio_mode = True
     else:
