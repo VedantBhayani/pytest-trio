@@ -234,7 +234,10 @@ class TrioFixture:
                 assert not self.user_done_events
                 func_value = None
                 assert not test_ctx.crashed
-                await self._func(**resolved_kwargs)
+                # Filter out autouse fixtures (keys starting with _trio_autouse_)
+                test_kwargs = {k: v for k, v in resolved_kwargs.items() 
+                               if not k.startswith("_trio_autouse_")}
+                await self._func(**test_kwargs)
             else:
                 func_value = self._func(**resolved_kwargs)
                 if isinstance(func_value, Coroutine):
@@ -388,11 +391,28 @@ def _trio_test_runner_factory(item, testfunc=None):
             "<test {!r}>".format(testfunc.__name__), testfunc, kwargs, is_test=True
         )
 
+        # Add autouse trio fixtures to test's kwargs so test waits for them
+        if hasattr(item, "_trio_autouse_fixtures"):
+            for fixture in item._trio_autouse_fixtures:
+                # Use a unique key that won't conflict with real fixture names
+                autouse_key = f"_trio_autouse_{fixture.name}"
+                test._pytest_kwargs[autouse_key] = fixture
+
         contextvars_ctx = contextvars.copy_context()
         contextvars_ctx.run(canary.set, "in correct context")
 
+        # Collect all fixtures to run: test dependencies + autouse fixtures
+        all_fixtures = set(test.register_and_collect_dependencies())
+        
+        # Add autouse trio fixtures from the test item
+        if hasattr(item, "_trio_autouse_fixtures"):
+            for fixture in item._trio_autouse_fixtures:
+                all_fixtures.add(fixture)
+                # Also register their dependencies
+                all_fixtures.update(fixture.register_and_collect_dependencies())
+
         async with trio.open_nursery() as nursery:
-            for fixture in test.register_and_collect_dependencies():
+            for fixture in all_fixtures:
                 nursery.start_soon(
                     fixture.run, test_ctx, contextvars_ctx, name=fixture.name
                 )
@@ -463,6 +483,7 @@ def _is_trio_fixture(func, coerce_async, kwargs):
 
 
 def handle_fixture(fixturedef, request, force_trio_mode):
+    # print(f"DEBUG handle_fixture called: fixturedef.argname={fixturedef.argname}, fixturedef.func={fixturedef.func}, fixturedef.autouse={getattr(fixturedef, 'autouse', 'N/A')}")
     is_trio_test = request.node.get_closest_marker("trio") is not None
     if force_trio_mode:
         is_trio_mode = True
@@ -470,7 +491,9 @@ def handle_fixture(fixturedef, request, force_trio_mode):
         is_trio_mode = request.node.config.getini("trio_mode")
     coerce_async = is_trio_test or is_trio_mode
     kwargs = {name: request.getfixturevalue(name) for name in fixturedef.argnames}
+    # print(f"DEBUG: coerce_async={coerce_async}, kwargs={kwargs}")
     if _is_trio_fixture(fixturedef.func, coerce_async, kwargs):
+        # print(f"DEBUG: IS TRIO FIXTURE")
         if request.scope != "function":
             raise RuntimeError("Trio fixtures must be function-scope")
         if not is_trio_test:
@@ -481,11 +504,26 @@ def handle_fixture(fixturedef, request, force_trio_mode):
             kwargs,
         )
         fixturedef.cached_result = (fixture, request.param_index, None)
+        
+        # If this is an autouse fixture, store it on the test item so it gets run
+        if getattr(fixturedef, "_autouse", False):
+            if not hasattr(request.node, "_trio_autouse_fixtures"):
+                request.node._trio_autouse_fixtures = []
+            request.node._trio_autouse_fixtures.append(fixture)
+        
         return fixture
+    else:
+        pass
+        # print(f"DEBUG: NOT A TRIO FIXTURE")
 
 
 def pytest_fixture_setup(fixturedef, request):
     return handle_fixture(fixturedef, request, force_trio_mode=False)
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getini("trio_mode"):
+        automark(items, run=choose_run(config=config))
 
 
 ################################################################
