@@ -1,6 +1,5 @@
 """Test to reproduce the autouse async fixture bug."""
 import pytest
-import trio
 
 
 def test_autouse_async_fixture_with_trio_mark(testdir):
