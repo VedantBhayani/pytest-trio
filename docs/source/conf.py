@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-#
 # Documentation build configuration file, created by
 # sphinx-quickstart on Sat Jan 21 19:11:14 2017.
 #
