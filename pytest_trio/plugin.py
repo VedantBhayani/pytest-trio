@@ -48,7 +48,7 @@ def pytest_configure(config):
 ################################################################
 
 # This is more complicated than you might expect.
-
+#
 # The first complication is that all of pytest's machinery for setting up,
 # running a test, and then tearing it down again is synchronous. But we want
 # to have async setup, async tests, and async teardown.
@@ -65,7 +65,7 @@ def pytest_configure(config):
 # - trio fixtures have to be test-scoped
 # - normally pytest considers a fixture crash to be an ERROR, but when a trio
 #   fixture crashes, it gets classified as a FAIL.
-
+#
 # The other major complication is that we really want to allow trio fixtures
 # to yield inside a nursery. (See gh-55 for more discussion.) And then while
 # the fixture function is suspended, a task inside that nursery might crash.
@@ -98,13 +98,13 @@ def pytest_configure(config):
 # Then we use trio.Event objects to implement the ordering described above.
 #
 # If a fixture crashes, whether during setup, teardown, or in a background
-# task at any other point, then we mark the whole test run as "crashed". When
+# task at any moment, then we mark the whole test run as "crashed". When
 # a run is "crashed", two things happen: (1) if any fixtures or the test
 # itself haven't started yet, then we don't start them, and treat them as if
 # they've already exited. (2) if the test is running, we cancel it. That's
 # all. In particular, if a fixture has a background crash, we don't propagate
 # that to any other fixtures, we still follow the normal teardown sequence,
-# and so on – but since the test is cancelled, the teardown sequence should
+# and so on -- but since the test is cancelled, the teardown sequence should
 # start immediately.
 
 canary = contextvars.ContextVar("pytest-trio canary")
@@ -235,7 +235,7 @@ class TrioFixture:
                 func_value = None
                 assert not test_ctx.crashed
                 # Filter out autouse fixtures (keys starting with _trio_autouse_)
-                test_kwargs = {k: v for k, v in resolved_kwargs.items() 
+                test_kwargs = {k: v for k, v in resolved_kwargs.items()
                                if not k.startswith("_trio_autouse_")}
                 await self._func(**test_kwargs)
             else:
@@ -268,7 +268,7 @@ class TrioFixture:
             # "inside" that scope even though its with block is not on the
             # stack. In particular this means that if they get cancelled, then
             # our waiting might get a Cancelled error, that we cannot really
-            # deal with – it should get thrown back into the fixture
+            # deal with -- it should get thrown back into the fixture
             # generator, but pytest fixture generators don't work that way:
             #   https://github.com/python-trio/pytest-trio/issues/55
             # And besides, we can't start tearing down until all our users
@@ -380,7 +380,7 @@ def _trio_test_runner_factory(item, testfunc=None):
         return testfunc
 
     if not iscoroutinefunction(testfunc):
-        pytest.fail("test function `%r` is marked trio but is not async" % item)
+        pytest.fail(f"test function `{item!r}` is marked trio but is not async")
 
     @_trio_test(run=run)
     async def _bootstrap_fixtures_and_run_test(**kwargs):
@@ -388,7 +388,7 @@ def _trio_test_runner_factory(item, testfunc=None):
 
         test_ctx = TrioTestContext()
         test = TrioFixture(
-            "<test {!r}>".format(testfunc.__name__), testfunc, kwargs, is_test=True
+            f"<test {testfunc.__name__!r}>", testfunc, kwargs, is_test=True
         )
 
         # Add autouse trio fixtures to test's kwargs so test waits for them
@@ -403,7 +403,7 @@ def _trio_test_runner_factory(item, testfunc=None):
 
         # Collect all fixtures to run: test dependencies + autouse fixtures
         all_fixtures = set(test.register_and_collect_dependencies())
-        
+
         # Add autouse trio fixtures from the test item
         if hasattr(item, "_trio_autouse_fixtures"):
             for fixture in item._trio_autouse_fixtures:
@@ -417,15 +417,13 @@ def _trio_test_runner_factory(item, testfunc=None):
                     fixture.run, test_ctx, contextvars_ctx, name=fixture.name
                 )
 
-        silent_cancellers = (
-            test_ctx.fixtures_with_cancel - test_ctx.fixtures_with_errors
-        )
+        silent_cancellers = test_ctx.fixtures_with_cancel - test_ctx.fixtures_with_errors
         if silent_cancellers:
             for fixture in silent_cancellers:
                 test_ctx.error_list.append(
                     RuntimeError(
-                        "{} cancelled the test but didn't "
-                        "raise an error".format(fixture.name)
+                        f"{fixture.name} cancelled the test but didn't "
+                        "raise an error"
                     )
                 )
 
@@ -455,8 +453,8 @@ def pytest_runtest_call(item):
             )
         elif getattr(item.obj, "is_hypothesis_test", False):  # pragma: no cover
             pytest.fail(
-                "test function `%r` is using Hypothesis, but pytest-trio "
-                "only works with Hypothesis 3.64.0 or later." % item
+                f"test function `{item!r}` is using Hypothesis, but pytest-trio "
+                "only works with Hypothesis 3.64.0 or later."
             )
         else:
             item.obj = _trio_test_runner_factory(item)
@@ -499,18 +497,18 @@ def handle_fixture(fixturedef, request, force_trio_mode):
         if not is_trio_test:
             raise RuntimeError("Trio fixtures can only be used by Trio tests")
         fixture = TrioFixture(
-            "<fixture {!r}>".format(fixturedef.argname),
+            f"<fixture {fixturedef.argname!r}>",
             fixturedef.func,
             kwargs,
         )
         fixturedef.cached_result = (fixture, request.param_index, None)
-        
+
         # If this is an autouse fixture, store it on the test item so it gets run
         if getattr(fixturedef, "_autouse", False):
             if not hasattr(request.node, "_trio_autouse_fixtures"):
                 request.node._trio_autouse_fixtures = []
             request.node._trio_autouse_fixtures.append(fixture)
-        
+
         return fixture
     else:
         pass
@@ -560,11 +558,6 @@ def choose_run(config):
         )
 
     return run
-
-
-def pytest_collection_modifyitems(config, items):
-    if config.getini("trio_mode"):
-        automark(items, run=choose_run(config=config))
 
 
 ################################################################
