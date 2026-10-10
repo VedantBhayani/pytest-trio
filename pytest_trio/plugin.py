@@ -479,6 +479,20 @@ def _has_trio_marker(node):
     return False
 
 
+def _module_has_trio_tests(module_node):
+    """Check if module has any tests with the trio marker."""
+    if module_node is None:
+        return False
+    # Check if module itself has the marker (unlikely but possible)
+    if _has_trio_marker(module_node):
+        return True
+    # Check all items in the module
+    for item in getattr(module_node, "items", []):
+        if _has_trio_marker(item):
+            return True
+    return False
+
+
 def _is_trio_fixture(func, coerce_async, kwargs):
     return (
         getattr(func, "_force_trio_fixture", False)
@@ -495,6 +509,16 @@ def handle_fixture(fixturedef, request, force_trio_mode):
     else:
         is_trio_mode = request.node.config.getini("trio_mode")
     coerce_async = is_trio_test or is_trio_mode
+
+    # If not a trio test but fixture is autouse and async, check if module has trio tests
+    if not coerce_async and getattr(fixturedef, "_autouse", False):
+        # Find the module node (root of the tree)
+        module_node = request.node
+        while module_node is not None and getattr(module_node, "parent", None) is not None:
+            module_node = module_node.parent
+        if _module_has_trio_tests(module_node):
+            coerce_async = True
+
     kwargs = {name: request.getfixturevalue(name) for name in fixturedef.argnames}
     # print(f"DEBUG: coerce_async={coerce_async}, kwargs={kwargs}")
     if _is_trio_fixture(fixturedef.func, coerce_async, kwargs):
