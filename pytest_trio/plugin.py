@@ -510,8 +510,9 @@ def handle_fixture(fixturedef, request, force_trio_mode):
         is_trio_mode = request.node.config.getini("trio_mode")
     coerce_async = is_trio_test or is_trio_mode
 
-    # If not a trio test but fixture is autouse and async, check if module has trio tests
-    if not coerce_async and getattr(fixturedef, "_autouse", False):
+    # If not a trio test but fixture is async, check if module has trio tests
+    # This handles cases where fixtures are processed at module scope (older pytest)
+    if not coerce_async and (iscoroutinefunction(fixturedef.func) or isasyncgenfunction(fixturedef.func)):
         # Find the module node (root of the tree)
         module_node = request.node
         while module_node is not None and getattr(module_node, "parent", None) is not None:
